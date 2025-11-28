@@ -46,6 +46,16 @@ def create_tables(conn):
         );
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS diary (
+            id           INTEGER PRIMARY KEY,
+            movie_id     INTEGER NOT NULL,
+            watched_date TEXT NOT NULL,
+            rewatch      INTEGER NOT NULL,  -- 0 or 1
+            FOREIGN KEY (movie_id) REFERENCES movie(id)
+        );
+    """)
+
     conn.commit()
 
 
@@ -236,13 +246,13 @@ def process_csv(conn):
             replace_movie_cast(conn, movie_id, top_cast_names)
 
 
-def main():
+def build():
     # Remove old database files if they exist
     for ext in ("", "-wal", "-shm"):
         path = f"movies.db{ext}"
         if os.path.exists(path):
             os.remove(path)
-            
+
     conn = sqlite3.connect(DB_PATH)
 
     # Better performance: turn on WAL journal mode (optional but nice)
@@ -262,6 +272,65 @@ def main():
     finally:
         conn.close()
 
+def diary():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    diary_csv_path = Path("data/letterboxd/diary.csv")
+
+    with diary_csv_path.open(newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+
+        # Skip header
+        header = next(reader, None)
+
+        for row_index, row in enumerate(reader, start=2):
+            if len(row) < 8:
+                # not enough columns, skip
+                continue
+
+            title = row[1].strip()       # 2nd column: movie title
+            rewatch_str = row[5].strip() # 6th column: rewatch
+            watched_date = row[7].strip()# 8th column: watched date
+
+            if not title or not watched_date:
+                continue
+
+            # Convert rewatch to 0/1
+            # Letterboxd usually uses "Yes"/"" but we handle common variants.
+            r = rewatch_str.lower()
+            rewatch = 1 if r in ("yes", "true", "1", "y") else 0
+
+            # Find movie id by title
+            cur.execute("SELECT id FROM movie WHERE title = ?", (title,))
+            row_movie = cur.fetchone()
+
+            if not row_movie:
+                # Movie not found in movie table -> skip this diary entry
+                # (You could also log these if you want)
+                continue
+
+            movie_id = row_movie[0]
+
+            # Insert diary row
+            cur.execute("""
+                INSERT INTO diary (movie_id, watched_date, rewatch)
+                VALUES (?, ?, ?);
+            """, (movie_id, watched_date, rewatch))
+
+    conn.commit()
+    conn.close()
 
 if __name__ == "__main__":
-    main()
+    input = int(input("Select an option:\n1. Build database from ratings.csv\n2. Store diary from diary.csv (only if movie.db exist)\n"))
+    if input == 1:
+        print("Building database...")
+        build()
+    if input == 2:
+        if Path("data/movies.db").exists():
+            print("Storing diary...")
+            diary()
+        else:
+            print("Database does not exist. Please build the database first.")
+    else:
+        print("Build cancelled.")
