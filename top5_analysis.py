@@ -135,6 +135,37 @@ def get_top_actors_highest_rated(conn, limit=5):
         })
     return result
 
+# Function that gets the top 5 movies by first rating and watch count
+def get_top_movies(conn, limit=5):
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT
+            m.title AS title,
+            COUNT(*) AS watch_count,
+            AVG(m.rating) AS avg_rating
+        FROM diary d
+        JOIN movie m ON d.movie_id = m.id
+        WHERE m.rating IS NOT NULL
+        AND EXISTS (
+                SELECT 1
+                FROM diary d2
+                WHERE d2.movie_id = d.movie_id
+                AND d2.rewatch = 0
+            )
+        GROUP BY m.id
+        ORDER BY watch_count DESC, avg_rating DESC
+        LIMIT ?;
+    """, (limit,))
+    rows = cur.fetchall()
+
+    result = []
+    for title, watch_count, avg_rating in rows:
+        result.append({
+            "title": title,
+            "watch_count": watch_count,
+            "avg_rating": avg_rating,
+        })
+    return result
 
 def analyze(db_path: Path = DB_PATH) -> dict:
     """
@@ -155,6 +186,9 @@ def analyze(db_path: Path = DB_PATH) -> dict:
             "actors": {
                 "most_watched": get_top_actors_most_watched(conn, limit=5),
                 "highest_rated": get_top_actors_highest_rated(conn, limit=5),
+            },
+            "movies": {
+                "top_watched": get_top_movies(conn, limit=5),
             },
         }
     finally:
@@ -181,6 +215,9 @@ def print_analysis(data: dict):
     for a in data["actors"]["highest_rated"]:
         print(f"- {a['actor']} | {a['movie_count']} movies | {a['avg_rating']:.1f} avg")
 
+    print("\n=== Top New Movies ===")
+    for m in data["movies"]["top_watched"]:
+        print(f"- {m['title']} | {m['watch_count']} watches | {m['avg_rating']:.1f} avg")
 
 if __name__ == "__main__":
     stats = analyze()
